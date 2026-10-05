@@ -1,0 +1,7 @@
+executor: slurm
+jobs: 40                 # GPU jobs in flight; keep within your queue limit
+retries: 2
+latency-wait: 120
+keep-going: True
+rerun-incomplete: True
+printshellcmds: True

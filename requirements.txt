@@ -1,0 +1,5 @@
+numpy==2.5.3
+pandas==3.0.6
+pyBigWig==0.3.24
+pyBigWig==0.3.22
+pyBigWig==0.3.26

@@ -1,0 +1,32 @@
+# Genome and cell types
+chrom_sizes: "<path to chrom.sizes>"
+cell_types: [0, 1]              # ids to predict
+chroms: []                      # select which chromosomes to use
+                                # [] = every chromosome in chrom_sizes
+
+# Locations
+output_dir: "08_Pipeline_predictions/WG"   # one folder per window: <chrom>_<start>_<end>
+input_dir: "08_Pipeline_predictions"       # model script and genome files
+json_dir: "07_JSONs"
+pipeline_script: "00_Resources/pipeline.py"
+
+model: "GFIO/Human_Ery"         # HFmodel
+
+# Where one window's prediction lands, relative to its folder. CHECK THIS.
+bigwig_pattern: "predictions/{cell}/prediction_ref.bw"
+
+# Overlap handling: "mean" averages the overlap, "trusted" keeps each window's
+# middle only (no unreliable edges used, and no averaging).
+merge_mode: "mean"
+merge_chunk: 5000000            # bases held in memory per merge step
+
+resources:
+  predict:
+    mem_mb: 40000
+    runtime: 60
+    partition: "gpu-ada,gpu"
+    slurm_extra: "'--gpus=1'"
+  merge:
+    mem_mb: 8000
+    runtime: 240
+    partition: "short,long"
