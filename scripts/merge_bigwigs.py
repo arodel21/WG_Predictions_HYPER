@@ -92,12 +92,20 @@ def span_for(path: Path, spans: dict[str, tuple[int, int]] | None) -> tuple[int,
     return None
 
 
-def collect_chrom_sizes(handles: list, chroms: list[str] | None) -> dict[str, int]:
-    """Longest length seen for each chromosome across all inputs."""
+def collect_chrom_sizes(paths: list[Path], chroms: list[str] | None) -> dict[str, int]:
+    """Longest length seen for each chromosome across all inputs.
+
+    Files are opened one at a time: a chromosome can have ~2,000 windows, more
+    than the usual limit of 1,024 open files per process.
+    """
     sizes: dict[str, int] = {}
-    for handle in handles:
-        for chrom, length in handle.chroms().items():
-            sizes[chrom] = max(sizes.get(chrom, 0), int(length))
+    for path in paths:
+        handle = pyBigWig.open(str(path))
+        try:
+            for chrom, length in handle.chroms().items():
+                sizes[chrom] = max(sizes.get(chrom, 0), int(length))
+        finally:
+            handle.close()
     if chroms is not None:
         missing = [c for c in chroms if c not in sizes]
         if missing:
@@ -113,20 +121,26 @@ def merge_chunk(
 
     Accumulating a running sum and count avoids holding one array per file, which
     is what makes the memory independent of how many files are merged.
+
+    Each file is opened only for the blocks it can reach and closed straight away,
+    so the number of open files stays small however many windows are merged.
     """
     width = stop - start
     total = np.zeros(width, dtype=np.float64)
     count = np.zeros(width, dtype=np.int32)
 
-    for handle, span in sources:
+    for path, span in sources:
         if span is not None:
             # Skip a file that cannot reach this block at all.
             if span[1] <= start or span[0] >= stop:
                 continue
-        if chrom not in handle.chroms():
-            continue
-
-        values = handle.values(chrom, start, stop, numpy=True)
+        handle = pyBigWig.open(str(path))
+        try:
+            if chrom not in handle.chroms():
+                continue
+            values = handle.values(chrom, start, stop, numpy=True)
+        finally:
+            handle.close()
         if span is not None:
             # Ignore anything outside the region this file is allowed to supply.
             keep = np.zeros(width, dtype=bool)
@@ -185,43 +199,37 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
     spans = read_manifest(args.manifest, args.mode) if args.manifest else None
-    handles = []
-    sources = []
+    # (path, span) pairs; files are opened only while they are being read
+    sources = [(path, span_for(path, spans)) for path in args.inputs]
+
+    if spans is not None:
+        unmatched = sum(1 for _, span in sources if span is None)
+        if unmatched:
+            print(
+                f"WARNING: {unmatched} input(s) are not in the manifest and "
+                "will be read in full",
+                file=sys.stderr,
+            )
+
     try:
-        for path in args.inputs:
-            handle = pyBigWig.open(str(path))
-            handles.append(handle)
-            sources.append((handle, span_for(path, spans)))
+        sizes = collect_chrom_sizes(args.inputs, args.chroms)
+    except KeyError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
 
-        if spans is not None:
-            unmatched = sum(1 for _, span in sources if span is None)
-            if unmatched:
-                print(
-                    f"WARNING: {unmatched} input(s) are not in the manifest and "
-                    "will be read in full",
-                    file=sys.stderr,
-                )
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    out = pyBigWig.open(str(args.output), "w")
+    out.addHeader([(c, s) for c, s in sizes.items()])
 
-        try:
-            sizes = collect_chrom_sizes(handles, args.chroms)
-        except KeyError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
-            return 1
-
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        out = pyBigWig.open(str(args.output), "w")
-        out.addHeader([(c, s) for c, s in sizes.items()])
-
-        written = 0
+    written = 0
+    try:
         for chrom, length in sizes.items():
             for start in range(0, length, args.chunk):
                 stop = min(start + args.chunk, length)
                 merged = merge_chunk(sources, chrom, start, stop)
                 written += write_runs(out, chrom, start, merged)
-        out.close()
     finally:
-        for handle in handles:
-            handle.close()
+        out.close()
 
     print(f"{len(args.inputs)} file(s) -> {args.output} ({written:,} intervals)")
     return 0

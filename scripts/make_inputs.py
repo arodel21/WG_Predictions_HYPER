@@ -35,7 +35,13 @@ STEP = WINDOW - 2 * PADDING  # 114,688
 
 #: Prediction settings that are the same for every window.
 JSON_CONSTANTS = {
-    "get_peaks": True,
+    # Peaks are only used for explanations (is_explained is False). With
+    # get_peaks True, pipeline.py writes the bigwigs and then crashes in
+    # find_peaks ("`x` must be a 1-D array"), so Snakemake would mark every
+    # window as failed and delete its bigwigs. pipeline.py requires
+    # additional_peaks whenever get_peaks is False, so pass an empty list.
+    "get_peaks": False,
+    "additional_peaks": [],
     "merged": False,
     "is_explained": False,
     "save_tensors": False,

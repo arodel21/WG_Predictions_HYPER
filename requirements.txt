@@ -3,3 +3,4 @@ pandas==3.0.6
 pyBigWig==0.3.24
 pyBigWig==0.3.22
 pyBigWig==0.3.26
+snakemake==9.14.8
